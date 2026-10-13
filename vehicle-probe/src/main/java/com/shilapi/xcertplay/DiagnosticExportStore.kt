@@ -1,13 +1,15 @@
 package com.shilapi.xcertplay
 
+import android.Manifest
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.media.MediaScannerConnection
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
@@ -16,7 +18,10 @@ import java.io.IOException
 
 /** Saves an app-owned report without depending on an OEM's document-picker activity. */
 // carlito | Share the existing provider-free exporter with the vehicle scan process.
+// carlito | Public so the vehicle probe module and the common host resolve one exporter.
 object DiagnosticExportStore {
+    private const val TAG = "DiagnosticExport"
+
     data class SavedReport(
         val uri: Uri,
         val savedToDownloads: Boolean = false,
@@ -24,7 +29,16 @@ object DiagnosticExportStore {
         val savedPath: String? = null,
     )
 
-    /** Android 9 and OEMs without working Downloads storage can still export privately. */
+    /**
+     * Saves to the visible Downloads/DiPlay folder whenever the head unit allows it, so the
+     * report can be reached from a file manager or USB. Order:
+     *  1. Android 10+: MediaStore Downloads (no permission needed).
+     *  2. Direct file in public Downloads/DiPlay: Android 11+ allows it without permission;
+     *     Android 9 needs WRITE_EXTERNAL_STORAGE. Some DiLink builds lack a working
+     *     MediaStore Downloads provider, so this also covers Android 11+ when step 1 fails.
+     *  3. App-specific external storage (Android/data/<package>, hidden on many head units).
+     *  4. Internal app storage, shared through the report viewer.
+     */
     fun saveWithoutPicker(context: Context, fileName: String, report: String, shareable: Boolean = true): SavedReport {
         // carlito | Separate fallback folders prevent scan retention from pruning connection logs.
         val reportDirectory = if (fileName.startsWith("DiPlay-Vehicle-") || fileName.startsWith("车辆扫描-"))
@@ -33,22 +47,19 @@ object DiagnosticExportStore {
             try {
                 return SavedReport(saveToDownloads(context.contentResolver, fileName, report), savedToDownloads = true)
             } catch (error: Exception) {
-                Log.w("DiPlayVehicleProbe", "Downloads provider export failed; retaining report locally", error)
                 // Preserve the report even when the OEM's public storage provider is absent.
+                Log.w(TAG, "MediaStore Downloads unavailable; trying the public folder directly", error)
             }
         }
-        // carlito | Android 9 writes public Downloads after the user's storage grant.
-        if (Build.VERSION.SDK_INT <= 28 && context.checkSelfPermission(
-                android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        if (canWritePublicDownloads(context)) {
             try {
-                @Suppress("DEPRECATION")
-                val directory = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DiPlay")
-                return saveInDirectory(context, directory, fileName, report, publicDownload = true, shareable = shareable)
+                // carlito | Keep the report's own name and let the shared helper pick a free suffix.
+                return saveToPublicDownloads(context, fileName, report, reportDirectory, shareable)
             } catch (error: Exception) {
-                Log.w("DiPlayVehicleProbe", "Public Downloads file export failed; retaining report locally", error)
+                Log.w(TAG, "Public Downloads folder unavailable; saving in app storage", error)
             }
         }
-        if (Build.VERSION.SDK_INT <= 28) Log.w("DiPlayVehicleProbe", "Public Downloads unavailable; storage permission or volume must be checked")
+        if (Build.VERSION.SDK_INT <= 28) Log.w(TAG, "Public Downloads unavailable; storage permission or volume must be checked")
         try {
             // Use Android's package-specific directory, including debug application IDs.
             // No storage permission or document-picker activity is needed.
@@ -92,6 +103,71 @@ object DiagnosticExportStore {
             file.delete()
             throw error
         }
+    }
+
+    /** Android 11+ lets any app create files in Downloads; older versions need the permission. */
+    fun canWritePublicDownloads(context: Context, sdkInt: Int = Build.VERSION.SDK_INT): Boolean =
+        sdkInt >= Build.VERSION_CODES.R ||
+            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * True only on Android 9, the one version where storage access is what puts the report in
+     * the visible Downloads folder. Android 10+ saves there through MediaStore without asking.
+     */
+    fun needsStoragePermission(context: Context, sdkInt: Int = Build.VERSION.SDK_INT): Boolean =
+        sdkInt < Build.VERSION_CODES.Q && !canWritePublicDownloads(context, sdkInt)
+
+    @Suppress("DEPRECATION")
+    fun publicDownloadsDirectory(): File =
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "DiPlay")
+
+    fun saveToPublicDownloads(
+        context: Context,
+        fileName: String,
+        report: String,
+        reportDirectory: String = "diagnostic-reports",
+        shareable: Boolean = true,
+    ): SavedReport {
+        val directory = publicDownloadsDirectory()
+        if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Downloads/DiPlay is unavailable")
+        val base = fileName.removeSuffix(".txt")
+        var file = File(directory, fileName)
+        var copy = 1
+        while (file.exists()) file = File(directory, "$base-${copy++}.txt")
+        try {
+            // carlito | A vehicle report must be durable without an OEM sharing provider.
+            val bytes = report.toByteArray(Charsets.UTF_8)
+            file.outputStream().use { output -> output.write(bytes); output.fd.sync() }
+            if (file.length() != bytes.size.toLong()) throw IOException("Downloads/DiPlay did not keep the report")
+        } catch (error: Exception) {
+            file.delete()
+            throw error
+        }
+        // The report is saved; nothing below may undo that. The user's Downloads folder is never pruned.
+        runCatching {
+            MediaScannerConnection.scanFile(context.applicationContext, arrayOf(file.absolutePath), arrayOf("text/plain"), null)
+        }
+        if (!shareable) {
+            // carlito | Local location only; never pass this URI to another application.
+            return SavedReport(Uri.fromFile(file), savedToDownloads = true, savedPath = file.absolutePath)
+        }
+        val uri = try {
+            FileProvider.getUriForFile(context, "${context.packageName}.diagnostic-reports", file)
+        } catch (error: IllegalArgumentException) {
+            // Some storage layouts resolve Downloads outside the provider's external root.
+            // Share a private copy instead; the visible file in Downloads/DiPlay stays.
+            Log.w(TAG, "Downloads/DiPlay is not shareable through the provider; sharing a private copy", error)
+            privateShareCopy(context, reportDirectory, fileName, report)
+        }
+        return SavedReport(uri, savedToDownloads = true, savedPath = file.absolutePath)
+    }
+
+    private fun privateShareCopy(context: Context, reportDirectory: String, fileName: String, report: String): Uri {
+        val external = runCatching { context.getExternalFilesDir(null) }.getOrNull()
+        if (external != null) {
+            runCatching { return saveInDirectory(context, File(external, reportDirectory), fileName, report).uri }
+        }
+        return saveInDirectory(context, File(context.filesDir, reportDirectory), fileName, report, savedInApp = true).uri
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)

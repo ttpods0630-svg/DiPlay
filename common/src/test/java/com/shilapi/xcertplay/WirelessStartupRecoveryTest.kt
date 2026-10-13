@@ -4,8 +4,11 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.widget.Button
+import android.widget.TextView
+import com.shilapi.xcertplay.host.R
 import com.shilapi.xcertplay.network.WirelessStartupFailure
 import com.shilapi.xcertplay.orchestration.CarPlayStatus
+import com.shilapi.xcertplay.transport.BluetoothRadioCheck
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -74,6 +77,27 @@ class WirelessStartupRecoveryTest {
         assertEquals(0, budget().retries)
         assertFalse(ReflectionHelpers.getField(activity, "reconnectScheduled"))
         assertEquals(View.VISIBLE, retry.visibility)
+    }
+
+    // No further attempt can make a head unit's Bluetooth reach the phone.
+    @Test fun bluetoothThatReachesNoPhoneDoesNotAutomaticallyRetry() {
+        report(status = CarPlayStatus.Failed("Android Bluetooth on this head unit reports connections that are not real",
+            startupFailure = WirelessStartupFailure.BLUETOOTH_UNUSABLE))
+        assertEquals(0, budget().retries)
+        assertFalse(ReflectionHelpers.getField(activity, "reconnectScheduled"))
+        assertTrue(ReflectionHelpers.getField(activity, "startupRetryStopped"))
+        assertEquals(View.VISIBLE, retry.visibility)
+    }
+
+    // The driver can switch Bluetooth on, so the screen asks for it and the attempts go on.
+    @Test fun bluetoothThatIsOffAsksForItAndKeepsRetrying() {
+        val stage = TextView(activity)
+        ReflectionHelpers.setField(activity, "stageStatusView", stage)
+        report(status = CarPlayStatus.Failed(BluetoothRadioCheck.RADIO_OFF))
+        assertEquals(activity.getString(R.string.turn_on_bluetooth_in_the_head_unit_s_settings_to_connect), stage.text.toString())
+        assertTrue(ReflectionHelpers.getField(activity, "reconnectScheduled"))
+        assertFalse(ReflectionHelpers.getField(activity, "startupRetryStopped"))
+        assertEquals(View.GONE, retry.visibility)
     }
 
     @Test fun staleGenerationUserDisconnectMenuAndDifferentOwnerCannotSchedule() {

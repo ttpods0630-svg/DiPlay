@@ -5,5 +5,6 @@
     <!-- carlito: scan exports retain independent files and share grants. -->
     <files-path name="vehicle_reports" path="vehicle-reports/" />
     <external-files-path name="external_vehicle_reports" path="vehicle-reports/" />
+    <!-- Only DiPlay's own folder in the public Downloads, never the rest of shared storage. -->
     <external-path name="public_reports" path="Download/DiPlay/" />
 </paths>

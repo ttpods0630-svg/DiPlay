@@ -98,12 +98,18 @@ class ManualHotspotManager(
         val factoryRoute = selected.factoryRoute
         // carlito | The separate factory AP must not inherit the other Android AP's SSID or
         // security. Use one saved credential pair; require validation for ordinary Android APs.
-        val apConfiguration = if (factoryRoute) null else readApConfiguration()
-        if (apConfiguration != null && apConfiguration.ssid != expectedSsid) {
+        val readConfiguration = readApConfiguration()
+        // The Android configuration describes the 2.4 GHz network, so its channel, band and
+        // frequency say nothing about the companion; only its security carries over.
+        val companion = readConfiguration != null &&
+            isFiveGhzCompanion(apSsid = readConfiguration.ssid, expectedSsid = expectedSsid)
+        if (readConfiguration != null && readConfiguration.ssid != expectedSsid && !companion) {
             throw WirelessStartupException(WirelessStartupFailure.HOTSPOT_CONFIGURATION,
                 "Manual hotspot SSID does not match the active local AP configuration: " +
-                    "'${apConfiguration.ssid}'")
+                    "'${readConfiguration.ssid}'")
         }
+        val apConfiguration = if (factoryRoute || companion) null else readConfiguration
+        if (companion) onDiagnostic("Manual hotspot uses the car's 5 GHz companion network of the configured hotspot")
         validateApConfiguration(apConfiguration)
         confirmed = selected
         onDiagnostic("hotspot interface confirmed iface=${selected.name} index=${selected.index} atNs=${System.nanoTime()}")
@@ -112,8 +118,8 @@ class ManualHotspotManager(
             if (factoryRoute) null else (runCatching { network?.hardwareAddress?.toMacAddressString() }.getOrNull()
                 ?.takeUnless { it == "02:00:00:00:00:00" || it == "00:00:00:00:00:00" }
                 ?: HotspotInterfaceBssid.read(selected.name)))
-        val connectionFrequency = if (factoryRoute) null else frequencyFromConnectionInfo()
-        val scanFrequency = if (factoryRoute) null else frequencyFromScanResult(localInterface)
+        val connectionFrequency = if (factoryRoute || companion) null else frequencyFromConnectionInfo()
+        val scanFrequency = if (factoryRoute || companion) null else frequencyFromScanResult(localInterface)
         val channel = observedManualHotspotChannel(
             apChannel = apConfiguration?.channel ?: 0,
             connectionFrequencyMHz = connectionFrequency,
@@ -126,12 +132,15 @@ class ManualHotspotManager(
             scanFrequency != null -> scanFrequency
             else -> null
         }
-        val security = apConfiguration?.security ?: expectedSecurity
+        // carlito | A 5 GHz companion still owns the live security; the factory route keeps the
+        // one saved credential pair.
+        val exposedSecurity = if (companion) readConfiguration?.security else apConfiguration?.security
+        val security = exposedSecurity ?: expectedSecurity
         // carlito | Match the working Geely APK: discovery, invitations and iAP2 use one AP
         // address. Selection already prefers IPv4; do not add another advertised identity
         // from an incidental IPv6 address. Same-LAN and managed hotspots keep their policy.
         val hostAddresses = listOfNotNull(localInterface.hostAddress)
-        onDiagnostic("Manual hotspot configReadable=${apConfiguration != null} " +
+        onDiagnostic("Manual hotspot configReadable=${readConfiguration != null} " +
             "security=$security channelKnown=${channel > 0} " +
             "credentialsSource=saved addressPolicy=primary " +
             "networkSource=${if (factoryRoute) "ecarx_client_route" else "android_ap"} " +
@@ -164,7 +173,7 @@ class ManualHotspotManager(
             bandLabel = when (expectedBand) {
                 ManualHotspotBand.GHZ_2_4 -> "2.4 GHz"
                 ManualHotspotBand.GHZ_5 -> "5 GHz"
-                ManualHotspotBand.AUTO ->
+                ManualHotspotBand.AUTO -> if (companion) "5 GHz" else
                     frequencyMHz?.let(::bandLabel) ?: observedBandLabel ?: "Auto"
             },
             backend = WirelessHotspotBackend.MANUAL_HOTSPOT,
@@ -387,9 +396,17 @@ class ManualHotspotManager(
         val hardwareAddress: String?,
     )
 
-    private companion object {
-        const val TAG = "xcertplay-usb"
+    internal companion object {
+        private const val TAG = "xcertplay-usb"
+        private val FIVE_GHZ_SUFFIXES = listOf("_5G", "-5G")
 
+        /**
+         * Some head units configure one hotspot name in Android and also broadcast a 5 GHz network
+         * named after it with "_5G" and the same password (#617). Android only knows the first, so
+         * choosing the second failed as a name mismatch.
+         */
+        fun isFiveGhzCompanion(apSsid: String, expectedSsid: String): Boolean =
+            apSsid.isNotEmpty() && FIVE_GHZ_SUFFIXES.any { expectedSsid.equals(apSsid + it, ignoreCase = true) }
     }
 }
 

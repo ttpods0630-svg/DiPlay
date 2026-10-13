@@ -302,6 +302,8 @@ object AirPlayPersistence {
     fun saveNavigationOutputDevice(context: Context, device: AudioOutputDevice?) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString("navigation_output_device", device?.encode()).apply()
+    }
+
     /** Applies a nonzero setup-guide default only when no current or legacy choice exists. */
     fun applySetupNavigationAudioChannelDefault(context: Context, channel: Int): Boolean {
         if (channel !in AUDIO_CHANNELS || channel == 0) return false

@@ -5557,8 +5557,8 @@ class CarPlayHostActivity : ComponentActivity() {
     private fun reconnectAfterLoss(
         reason: String,
         startupFailure: WirelessStartupFailure? = null,
-        recoverableBySession: Boolean = false,
         englishReason: String = reason,
+        recoverableBySession: Boolean = false,
     ) {
         if (!CarPlayBackgroundSession.isOwner(this)) return
         if (menuOpen) recoveryPendingAfterMenu = true

@@ -1,10 +1,27 @@
-# DiPlay 0.2.15 upstream integration
+# DiPlay 0.2.19 upstream integration
 
-Current merge source: upstream `9e244d958afe6b8fd79ade49769ce25a944f397b` (0.2.15).
+Current merge source: upstream `9aa9c549ee2726770ad55ec997beeeff642990fe` (0.2.19 release merge; tag `v0.2.19` = `e06a250219b2c2288948d8b4ad7203b417db0de1`).
+Upstream releases included: 0.2.17 = `391c90f80b4d54b2732dbbb3e51bf56910768ceb`, 0.2.18 = `e8d23603ccf5aa9c32ad5c999656c5fb492c83e6`.
+Previous merge source: upstream `6ebb58218f90b0c0853b78013cb8431765ca77bb` (0.2.16 release merge, PR #533; tag `v0.2.16` = `bac419695ca26b7e67d204a279333ca52132c2cb`).
 Previous connection reset: upstream `7887bb7bf2b52258e663a2a4ea1332382ed80ad8` (0.2.14).
 Previous feature baseline: `8f53b27b3168aedb661e9f9bb7122ea344b75ada`.
-App version is `0.2.15`, aligned with upstream at the user's request.
-Version code increases to `40` so installed fork builds can upgrade.
+App version is `0.2.19`, aligned with upstream at the user's request.
+Version code increases to `42` so installed fork builds can upgrade.
+Fork merge commit: `721a0814abb5e168e80b4b36508dec7de2a9de17`.
+
+## Upstream 0.2.17-0.2.19 integration scope
+
+Three upstream releases are merged in one integration. Retained fork behaviour: Geely
+factory-hotspot routing (ECARX client route) and the separate GD bridge, steering
+interception and wheel learning, HUD and cluster projection, navigation/media output
+hooks, vehicle scanning, the fork's single advertised AP address policy and app-wide
+immersive display mode. Adopted upstream fixes: the 5 GHz companion hotspot network,
+report saving into the visible public Downloads/DiPlay folder, Harman fullscreen flags,
+album-artwork recovery, the call-popup guard, retryable startup failures, car-button icon
+sizing, and the Japanese, Traditional Chinese and phone-page work.
+This integration remains the required path: `sync-upstream.yml` keeps refusing an
+automatic merge while this file exists, because upstream changes must be applied
+selectively against the fork's connection, audio and projection work.
 
 ## Full upstream merge
 
